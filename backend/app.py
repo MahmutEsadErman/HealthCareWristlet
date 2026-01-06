@@ -1,5 +1,6 @@
 from flask import Flask
 from flask_jwt_extended import JWTManager
+from flask_cors import CORS
 from config import Config
 from models import db
 from routes import api
@@ -7,6 +8,9 @@ from routes import api
 def create_app():
     app = Flask(__name__)
     app.config.from_object(Config)
+
+    # CORS ayarlarını etkinleştir (mobil uygulama için gerekli)
+    CORS(app, resources={r"/*": {"origins": "*"}})
 
     db.init_app(app)
     JWTManager(app)

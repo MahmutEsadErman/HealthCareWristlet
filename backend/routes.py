@@ -10,47 +10,74 @@ api = Blueprint('api', __name__)
 def index():
     return jsonify({'message': 'Welcome to the Health Monitoring API!'}), 200
 
+@api.route('/test', methods=['GET', 'POST'])
+def test():
+    print("=== TEST ENDPOINT HIT ===")
+    print(f"Method: {request.method}")
+    print(f"Headers: {dict(request.headers)}")
+    if request.method == 'POST':
+        print(f"Data: {request.get_json()}")
+    return jsonify({'message': 'Test successful', 'method': request.method}), 200
+
 @api.route('/auth/register', methods=['POST'])
 def register():
+    print("=== REGISTER REQUEST RECEIVED ===")
     data = request.get_json()
+    print(f"Request data: {data}")
+
     username = data.get('username')
     password = data.get('password')
     user_type = data.get('user_type') # 'caregiver' or 'patient'
 
+    print(f"Username: {username}, UserType: {user_type}")
+
     if not username or not password or not user_type:
+        print("ERROR: Missing required fields")
         return jsonify({'message': 'Username, password, and user_type required'}), 400
 
     if user_type not in ['caregiver', 'patient']:
+        print(f"ERROR: Invalid user_type: {user_type}")
         return jsonify({'message': 'Invalid user_type'}), 400
 
     if User.query.filter_by(username=username).first():
+        print(f"ERROR: Username already exists: {username}")
         return jsonify({'message': 'Username already exists'}), 400
 
+    print("Creating new user...")
     hashed_password = generate_password_hash(password)
     new_user = User(username=username, password_hash=hashed_password, user_type=user_type)
     db.session.add(new_user)
     db.session.commit()
+    print(f"User created with ID: {new_user.id}")
 
     if user_type == 'patient':
         # Create a Patient profile
+        print("Creating patient profile...")
         new_patient = Patient(user_id=new_user.id)
         db.session.add(new_patient)
         db.session.commit()
+        print("Patient profile created")
 
+    print("=== REGISTER SUCCESS ===")
     return jsonify({'message': 'User created successfully', 'user_id': new_user.id}), 201
 
 @api.route('/auth/login', methods=['POST'])
 def login():
+    print("=== LOGIN REQUEST RECEIVED ===")
     data = request.get_json()
+    print(f"Request data: {data}")
+
     username = data.get('username')
     password = data.get('password')
 
     user = User.query.filter_by(username=username).first()
 
     if user and check_password_hash(user.password_hash, password):
+        print(f"LOGIN SUCCESS - User: {username}, ID: {user.id}, Type: {user.user_type}")
         access_token = create_access_token(identity=str(user.id))
         return jsonify({'access_token': access_token, 'user_type': user.user_type, 'user_id': user.id}), 200
 
+    print(f"LOGIN FAILED - Invalid credentials for username: {username}")
     return jsonify({'message': 'Invalid credentials'}), 401
 
 # --- Wearable Data Endpoints ---
