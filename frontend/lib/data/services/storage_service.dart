@@ -83,4 +83,17 @@ class StorageService {
     final token = await getToken();
     return token != null && token.isNotEmpty;
   }
+
+  // API Base URL Management
+  Future<void> saveApiUrl(String url) async {
+    await _storage.write(key: 'api_base_url', value: url);
+  }
+
+  Future<String?> getApiUrl() async {
+    return await _storage.read(key: 'api_base_url');
+  }
+
+  Future<void> deleteApiUrl() async {
+    await _storage.delete(key: 'api_base_url');
+  }
 }

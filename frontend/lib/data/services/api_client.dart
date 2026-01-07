@@ -38,6 +38,25 @@ class ApiClient {
               ),
             ) {
     _setupInterceptors();
+    _initializeBaseUrl();
+  }
+
+  Future<void> _initializeBaseUrl() async {
+    final customUrl = await _storageService.getApiUrl();
+    if (customUrl != null && customUrl.isNotEmpty) {
+      _dio.options.baseUrl = customUrl;
+      _logger.d('Using custom API URL: $customUrl');
+    }
+  }
+
+  Future<void> updateBaseUrl(String newUrl) async {
+    await _storageService.saveApiUrl(newUrl);
+    _dio.options.baseUrl = newUrl;
+    _logger.d('Base URL updated to: $newUrl');
+  }
+
+  String getCurrentBaseUrl() {
+    return _dio.options.baseUrl;
   }
 
   void _setupInterceptors() {

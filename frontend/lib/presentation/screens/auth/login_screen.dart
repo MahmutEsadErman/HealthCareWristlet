@@ -50,6 +50,52 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     }
   }
 
+  void _showUrlDialog(BuildContext context) {
+    final apiClient = ref.read(apiClientProvider);
+    final currentUrl = apiClient.getCurrentBaseUrl();
+    final urlController = TextEditingController(text: currentUrl);
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Server URL'),
+        content: TextField(
+          controller: urlController,
+          decoration: const InputDecoration(
+            labelText: 'URL',
+            hintText: 'http://192.168.1.100:5000',
+            border: OutlineInputBorder(),
+          ),
+          keyboardType: TextInputType.url,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              final newUrl = urlController.text.trim();
+              if (newUrl.isNotEmpty) {
+                await apiClient.updateBaseUrl(newUrl);
+                if (context.mounted) {
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('URL updated: $newUrl'),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                }
+              }
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -80,10 +126,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   // App Icon
-                  Icon(
-                    Icons.favorite_border,
-                    size: 80,
-                    color: theme.colorScheme.primary,
+                  GestureDetector(
+                    onTap: () => _showUrlDialog(context),
+                    child: Icon(
+                      Icons.favorite_border,
+                      size: 80,
+                      color: theme.colorScheme.primary,
+                    ),
                   ),
                   const SizedBox(height: 16),
 
