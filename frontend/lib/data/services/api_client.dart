@@ -232,4 +232,20 @@ class ApiClient {
       },
     );
   }
+
+  /// Send fall detection event to server
+  Future<Response> sendFall({
+    required double probability,
+    double? bpm,
+    String? timestamp,
+  }) async {
+    return await post(
+      ApiConstants.wearableFall,
+      data: {
+        'probability': probability,
+        if (bpm != null) 'bpm': bpm,
+        if (timestamp != null) 'timestamp': timestamp,
+      },
+    );
+  }
 }

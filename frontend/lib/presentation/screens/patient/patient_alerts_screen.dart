@@ -122,40 +122,9 @@ class _PatientAlertsScreenState extends ConsumerState<PatientAlertsScreen> {
             onRefresh: _refreshAlerts,
             child: ListView.builder(
               padding: const EdgeInsets.all(16),
-              itemCount: alerts.length + 1,
+              itemCount: alerts.length,
               itemBuilder: (context, index) {
-                // Info Card at the top
-                if (index == 0) {
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 16),
-                    child: Card(
-                      color: theme.colorScheme.secondaryContainer,
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Row(
-                          children: [
-                            Icon(
-                              Icons.info_outline,
-                              size: 20,
-                              color: theme.colorScheme.onSecondaryContainer,
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Text(
-                                'Alarmlar 30 saniyede bir otomatik güncellenir',
-                                style: theme.textTheme.bodySmall?.copyWith(
-                                  color: theme.colorScheme.onSecondaryContainer,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  );
-                }
-
-                final alert = alerts[index - 1];
+                final alert = alerts[index];
                 return _AlertCard(
                   alert: alert,
                   onTap: () => _showAlertDetails(context, alert),

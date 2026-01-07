@@ -7,12 +7,14 @@ import 'package:logger/logger.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../models/sensor_data_model.dart';
 import './api_client.dart';
+import './notification_service.dart';
 
 /// ESP32 Wristlet BLE Service
 /// Manages Bluetooth connection and receives sensor data
 class BleService {
   final Logger _logger = Logger();
   final ApiClient _apiClient;
+  final NotificationService _notificationService = NotificationService();
 
   // Avoid log spam on frequent notifications
   static const Duration _sendErrorLogInterval = Duration(seconds: 30);
@@ -23,18 +25,29 @@ class BleService {
   StreamSubscription<List<ScanResult>>? _scanResultsSub;
   StreamSubscription<BluetoothConnectionState>? _connectionSub;
 
-  BleService(this._apiClient);
+  BleService(this._apiClient) {
+    // NotificationService'i başlat
+    _notificationService.initialize();
+  }
 
-  // UUIDs - Read from .env file
-  static String get serviceUuid => dotenv.get('BLE_SERVICE_UUID', fallback: '4fafc201-1fb5-459e-8fcc-c5c9c331914b');
-  static String get heartRateCharUuid => dotenv.get('BLE_HEART_RATE_CHAR_UUID', fallback: 'beb5483e-36e1-4688-b7f5-ea07361b26a8');
-  static String get imuCharUuid => dotenv.get('BLE_IMU_CHAR_UUID', fallback: 'beb5483f-36e1-4688-b7f5-ea07361b26a8');
-  static String get buttonCharUuid => dotenv.get('BLE_BUTTON_CHAR_UUID', fallback: 'beb54840-36e1-4688-b7f5-ea07361b26a8');
+  // UUIDs - Nordic UART Service (NUS) - ESP32-DUAL cihazı için
+  static String get serviceUuid => dotenv.get('BLE_SERVICE_UUID', fallback: '6E400001-B5A3-F393-E0A9-E50E24DCCA9E');
+  static String get txCharUuid => dotenv.get('BLE_TX_CHAR_UUID', fallback: '6E400003-B5A3-F393-E0A9-E50E24DCCA9E'); // ESP32 -> Phone (NOTIFY)
+  static String get rxCharUuid => dotenv.get('BLE_RX_CHAR_UUID', fallback: '6E400002-B5A3-F393-E0A9-E50E24DCCA9E'); // Phone -> ESP32 (WRITE)
+  
+  // Eski UUID'ler (uyumluluk için saklanıyor)
+  static String get heartRateCharUuid => txCharUuid;
+  static String get imuCharUuid => txCharUuid;
+  static String get buttonCharUuid => txCharUuid;
 
   // Device name to search for
-  static String get deviceName => dotenv.get('BLE_DEVICE_NAME', fallback: 'HealthWristlet');
+  static String get deviceName => dotenv.get('BLE_DEVICE_NAME', fallback: 'ESP32-DUAL');
 
   BluetoothDevice? _connectedDevice;
+  BluetoothCharacteristic? _txChar; // ESP32 -> Phone (NOTIFY)
+  BluetoothCharacteristic? _rxChar; // Phone -> ESP32 (WRITE)
+  
+  // Eski değişkenler (uyumluluk için)
   BluetoothCharacteristic? _heartRateChar;
   BluetoothCharacteristic? _imuChar;
   BluetoothCharacteristic? _buttonChar;
@@ -68,10 +81,9 @@ class BleService {
       // Location permission (required for BLE scan on some devices)
       final location = await Permission.locationWhenInUse.request();
 
-      // On Android 12+ (API 31+), location is typically NOT required for BLE scan.
-      // Some OEMs / older Android versions still behave better with location granted,
-      // but we should not hard-block scanning if location is denied.
-      final bool granted = bluetoothScan.isGranted && bluetoothConnect.isGranted;
+      // Location permission IS required for BLE scan on most Android devices
+      // Even on Android 12+, many devices still require location for BLE scanning
+      final bool granted = bluetoothScan.isGranted && bluetoothConnect.isGranted && location.isGranted;
 
       developer.log(
         'Permissions: scan=$bluetoothScan connect=$bluetoothConnect location=$location',
@@ -81,20 +93,23 @@ class BleService {
       print('🔍 BLE: perms scan=$bluetoothScan connect=$bluetoothConnect location=$location');
       
       if (!granted) {
-        _logger.w("Bluetooth permissions not granted");
+        _logger.w("Required permissions not granted");
+        // ignore: avoid_print
+        print('❌ BLE: Permissions not granted! scan=$bluetoothScan connect=$bluetoothConnect location=$location');
+        
+        if (!location.isGranted) {
+          _logger.e("⚠️ LOCATION permission is REQUIRED for BLE scanning!");
+          // ignore: avoid_print
+          print('❌ BLE: Location izni gerekli! Lütfen Ayarlar > Uygulamalar > healthcare_wristlet > İzinler > Konum izni verin');
+        }
+        
         if (bluetoothScan.isPermanentlyDenied || 
             bluetoothConnect.isPermanentlyDenied || 
             location.isPermanentlyDenied) {
-          _logger.e("Permissions permanently denied. Please enable in settings.");
+          _logger.e("Permissions permanently denied. Please enable in Settings > Apps > healthcare_wristlet > Permissions");
         }
 
         return false;
-      }
-
-      if (!location.isGranted) {
-        _logger.w(
-          "Location permission not granted. Scan may still work on Android 12+, but if you can't discover devices, enable Location permission + Location services.",
-        );
       }
       
       return true;
@@ -142,15 +157,14 @@ class BleService {
       await _scanResultsSub?.cancel();
       _scanResultsSub = null;
 
-      final targetService = Guid(serviceUuid);
-
       // Start scanning with longer timeout
+      // NOT: withServices filtresi bazı Android cihazlarda çalışmıyor
+      // Bu yüzden tüm cihazları tarayıp manuel filtreleme yapıyoruz
       _logger.i("Starting scan with 20 second timeout...");
-      developer.log('FlutterBluePlus.startScan() begin (20s, withServices)', name: 'BLE');
+      developer.log('FlutterBluePlus.startScan() begin (20s, no filter)', name: 'BLE');
       await FlutterBluePlus.startScan(
         timeout: const Duration(seconds: 20),
-        withServices: [targetService],
-        androidUsesFineLocation: false,
+        androidUsesFineLocation: true, // Bazı cihazlarda gerekli
       );
 
       // Listen to scan results
@@ -163,20 +177,33 @@ class BleService {
           String deviceNameStr = result.device.platformName;
           String deviceId = result.device.remoteId.toString();
           final advName = result.advertisementData.advName;
+          final localName = result.advertisementData.localName;
           final advServiceUuids = result.advertisementData.serviceUuids
               .map((e) => e.toString().toLowerCase())
               .toList();
 
+          // Her cihazı logla (debug için)
+          // ignore: avoid_print
+          print('🔍 BLE Device: name="$deviceNameStr" advName="$advName" localName="$localName" id=$deviceId services=$advServiceUuids');
           _logger.i(
-            "Device: platformName='$deviceNameStr' advName='$advName' (ID: $deviceId) services=$advServiceUuids",
+            "Device: platformName='$deviceNameStr' advName='$advName' localName='$localName' (ID: $deviceId) services=$advServiceUuids",
           );
           
-          final nameMatch = deviceNameStr.toLowerCase() == deviceName.toLowerCase() ||
-              advName.toLowerCase() == deviceName.toLowerCase();
+          // İsim eşleşmesi - daha esnek kontrol (ESP32-DUAL veya HealthWristlet)
+          final nameMatch = deviceNameStr.toLowerCase().contains(deviceName.toLowerCase()) ||
+              advName.toLowerCase().contains(deviceName.toLowerCase()) ||
+              localName.toLowerCase().contains(deviceName.toLowerCase()) ||
+              deviceNameStr.toLowerCase().contains('esp32') ||
+              advName.toLowerCase().contains('esp32') ||
+              deviceNameStr.toLowerCase().contains('health') ||
+              advName.toLowerCase().contains('health');
+          
           final serviceMatch = advServiceUuids.contains(serviceUuid.toLowerCase());
 
-          // Prefer matching by service UUID (most reliable)
+          // İsim veya service UUID eşleşirse bağlan
           if (serviceMatch || nameMatch) {
+            // ignore: avoid_print
+            print('✅ BLE MATCH FOUND! serviceMatch=$serviceMatch nameMatch=$nameMatch -> Connecting to $deviceNameStr');
             _logger.i(
               "✅ MATCH FOUND! serviceMatch=$serviceMatch nameMatch=$nameMatch -> Connecting to ID=$deviceId",
             );
@@ -236,30 +263,30 @@ class BleService {
       List<BluetoothService> services = await _connectedDevice!.discoverServices();
 
       for (BluetoothService service in services) {
-        if (service.uuid.toString().toLowerCase() == serviceUuid.toLowerCase()) {
-          _logger.i("Found wristlet service");
+        String svcUuid = service.uuid.toString().toLowerCase();
+        _logger.i("Found service: $svcUuid");
+        
+        // Nordic UART Service (NUS) - ESP32-DUAL için
+        if (svcUuid == serviceUuid.toLowerCase()) {
+          _logger.i("Found ESP32-DUAL NUS service");
 
           for (BluetoothCharacteristic characteristic in service.characteristics) {
             String charUuid = characteristic.uuid.toString().toLowerCase();
+            _logger.i("Found characteristic: $charUuid");
 
-            if (charUuid == heartRateCharUuid.toLowerCase()) {
-              _heartRateChar = characteristic;
+            // TX Characteristic (ESP32 -> Phone) - NOTIFY
+            if (charUuid == txCharUuid.toLowerCase()) {
+              _txChar = characteristic;
+              _logger.i("Setting up TX characteristic for sensor data");
               await _setupCharacteristicNotification(
                 characteristic,
-                _onHeartRateData,
+                _onEsp32Data, // Yeni CSV veri işleyici
               );
-            } else if (charUuid == imuCharUuid.toLowerCase()) {
-              _imuChar = characteristic;
-              await _setupCharacteristicNotification(
-                characteristic,
-                _onIMUData,
-              );
-            } else if (charUuid == buttonCharUuid.toLowerCase()) {
-              _buttonChar = characteristic;
-              await _setupCharacteristicNotification(
-                characteristic,
-                _onButtonData,
-              );
+            }
+            // RX Characteristic (Phone -> ESP32) - WRITE
+            else if (charUuid == rxCharUuid.toLowerCase()) {
+              _rxChar = characteristic;
+              _logger.i("Found RX characteristic for sending commands");
             }
           }
         }
@@ -268,6 +295,171 @@ class BleService {
       _logger.i("All characteristics setup complete");
     } catch (e) {
       _logger.e("Error discovering services: $e");
+    }
+  }
+  
+  /// ESP32'den gelen CSV verisini işle
+  /// Format: ax,ay,az,gx,gy,gz,rawIR,filteredSignal,threshold,bpm,finger
+  /// veya: EVT,EMERGENCY
+  void _onEsp32Data(List<int> data) async {
+    try {
+      String rawString = utf8.decode(data);
+      // ignore: avoid_print
+      print('📡 BLE Data: $rawString');
+      _logger.i("Received: $rawString");
+
+      // Fall event from ESP32 AI
+      if (rawString.startsWith("ALARM,FALL")) {
+        List<String> parts = rawString.split(',');
+        double probability = 1.0;
+        double? bpm;
+        if (parts.length >= 3) {
+          probability = double.tryParse(parts[2]) ?? 1.0;
+        }
+        if (parts.length >= 4) {
+          bpm = double.tryParse(parts[3]);
+        }
+
+        final timestamp = DateTime.now().toIso8601String();
+
+        // Local notification to patient device (optional UX)
+        try {
+          await _notificationService.showAlertNotification(
+            id: DateTime.now().millisecondsSinceEpoch.remainder(1000000),
+            title: 'Düşme algılandı',
+            body: 'Skor: ${probability.toStringAsFixed(2)}'
+                '${bpm != null ? ' • BPM: ${bpm.toStringAsFixed(1)}' : ''}',
+          );
+        } catch (_) {}
+
+        // Send to backend so caregivers see FALL alert
+        try {
+          await _apiClient.sendFall(
+            probability: probability,
+            bpm: bpm,
+            timestamp: timestamp,
+          );
+        } catch (e) {
+          final now = DateTime.now();
+          final last = _lastImuSendErrorLogAt; // reuse throttle window
+          if (last == null || now.difference(last) >= _sendErrorLogInterval) {
+            _lastImuSendErrorLogAt = now;
+            _logger.w("Failed to send fall alert to server: $e");
+          }
+        }
+
+        return;
+      }
+      
+      // Emergency event kontrolü
+      if (rawString.startsWith("EVT,EMERGENCY")) {
+        _logger.w("🚨 EMERGENCY BUTTON PRESSED!");
+        // ignore: avoid_print
+        print('🚨🚨🚨 EMERGENCY BUTTON PRESSED! 🚨🚨🚨');
+        
+        ButtonData button = ButtonData(
+          panicButtonStatus: true,
+          timestamp: DateTime.now().toIso8601String(),
+        );
+        _buttonController.add(button);
+        
+        // NOT: Hasta telefonunda bildirim gösterme!
+        // Bildirim bakıcıya sunucu üzerinden gidecek (alert polling ile)
+        
+        // Sunucuya gönder - bakıcı bu alert'i görecek
+        try {
+          await _apiClient.sendPanicButton(button.timestamp);
+          _logger.i("Emergency alert sent to server - caregiver will be notified");
+          // ignore: avoid_print
+          print('✅ Emergency alert sunucuya gönderildi - bakıcı bilgilendirilecek');
+        } catch (e) {
+          _logger.w("Failed to send panic button to server: $e");
+          // ignore: avoid_print
+          print('❌ Emergency alert sunucuya gönderilemedi: $e');
+        }
+        return;
+      }
+      
+      // CSV sensor verisi: ax,ay,az,gx,gy,gz,rawIR,filteredSignal,threshold,bpm,finger
+      List<String> parts = rawString.split(',');
+      if (parts.length >= 11) {
+        double ax = double.tryParse(parts[0]) ?? 0;
+        double ay = double.tryParse(parts[1]) ?? 0;
+        double az = double.tryParse(parts[2]) ?? 0;
+        double gx = double.tryParse(parts[3]) ?? 0;
+        double gy = double.tryParse(parts[4]) ?? 0;
+        double gz = double.tryParse(parts[5]) ?? 0;
+        // int rawIR = int.tryParse(parts[6]) ?? 0;
+        // double filteredSignal = double.tryParse(parts[7]) ?? 0;
+        // double threshold = double.tryParse(parts[8]) ?? 0;
+        double bpm = double.tryParse(parts[9]) ?? 0;
+        int finger = int.tryParse(parts[10]) ?? 0;
+        
+        String timestamp = DateTime.now().toIso8601String();
+        
+        // IMU verisi
+        IMUData imu = IMUData(
+          xAxis: ax,
+          yAxis: ay,
+          zAxis: az,
+          gx: gx,
+          gy: gy,
+          gz: gz,
+          timestamp: timestamp,
+        );
+        _imuController.add(imu);
+        
+        // Heart rate verisi (sadece parmak varsa)
+        if (finger == 1 && bpm > 0) {
+          HeartRateData heartRate = HeartRateData(
+            value: bpm,
+            timestamp: timestamp,
+          );
+          _heartRateController.add(heartRate);
+          
+          // Sunucuya gönder
+          try {
+            await _apiClient.sendHeartRate(bpm, timestamp);
+          } catch (e) {
+            final now = DateTime.now();
+            final last = _lastHeartRateSendErrorLogAt;
+            if (last == null || now.difference(last) >= _sendErrorLogInterval) {
+              _lastHeartRateSendErrorLogAt = now;
+              _logger.w("Failed to send heart rate to server: $e");
+            }
+          }
+        }
+        
+        // IMU verisini sunucuya gönder
+        try {
+          await _apiClient.sendIMU(ax, ay, az, gx, gy, gz, timestamp);
+        } catch (e) {
+          final now = DateTime.now();
+          final last = _lastImuSendErrorLogAt;
+          if (last == null || now.difference(last) >= _sendErrorLogInterval) {
+            _lastImuSendErrorLogAt = now;
+            _logger.w("Failed to send IMU to server: $e");
+          }
+        }
+      }
+    } catch (e) {
+      _logger.e("Error parsing ESP32 data: $e");
+    }
+  }
+  
+  /// ESP32'ye threshold değeri gönder
+  Future<void> sendThreshold(String key, double value) async {
+    if (_rxChar == null) {
+      _logger.w("RX characteristic not available");
+      return;
+    }
+    
+    try {
+      String command = "THR,$key,$value";
+      await _rxChar!.write(utf8.encode(command), withoutResponse: true);
+      _logger.i("Sent threshold: $command");
+    } catch (e) {
+      _logger.e("Error sending threshold: $e");
     }
   }
 
@@ -370,6 +562,8 @@ class BleService {
   /// Handle disconnection
   void _handleDisconnection() {
     _connectedDevice = null;
+    _txChar = null;
+    _rxChar = null;
     _heartRateChar = null;
     _imuChar = null;
     _buttonChar = null;

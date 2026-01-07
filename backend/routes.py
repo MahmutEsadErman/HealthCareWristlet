@@ -6,6 +6,36 @@ from datetime import datetime, timedelta, timezone
 
 api = Blueprint('api', __name__)
 
+# Minimum spacing between two alerts of the same type for a user
+ALERT_COOLDOWN = timedelta(minutes=3)
+
+
+def should_create_alert(user_id: int, alert_type: str, timestamp: datetime) -> bool:
+    """
+    Avoid spamming identical alerts by skipping new ones when there is already
+    an unresolved alert of the same type or a very recent one within the
+    cooldown window.
+    """
+    existing_unresolved = Alert.query.filter_by(
+        user_id=user_id, type=alert_type, is_resolved=False
+    ).first()
+    if existing_unresolved:
+        return False
+
+    recent_alert = (
+        Alert.query.filter(Alert.user_id == user_id, Alert.type == alert_type)
+        .order_by(Alert.timestamp.desc())
+        .first()
+    )
+    if recent_alert:
+        recent_ts = recent_alert.timestamp
+        if recent_ts.tzinfo is None:
+            recent_ts = recent_ts.replace(tzinfo=timezone.utc)
+        if (timestamp - recent_ts) < ALERT_COOLDOWN:
+            return False
+
+    return True
+
 @api.route('/')
 def index():
     return jsonify({'message': 'Welcome to the Health Monitoring API!'}), 200
@@ -111,11 +141,13 @@ def receive_heart_rate():
     
     # Check HR Thresholds
     if value < patient.min_hr:
-        alert = Alert(user_id=user_id, type='HR_LOW', message=f'Heart rate low: {value}', timestamp=timestamp)
-        db.session.add(alert)
+        if should_create_alert(user_id, 'HR_LOW', timestamp):
+            alert = Alert(user_id=user_id, type='HR_LOW', message=f'Heart rate low: {value}', timestamp=timestamp)
+            db.session.add(alert)
     elif value > patient.max_hr:
-        alert = Alert(user_id=user_id, type='HR_HIGH', message=f'Heart rate high: {value}', timestamp=timestamp)
-        db.session.add(alert)
+        if should_create_alert(user_id, 'HR_HIGH', timestamp):
+            alert = Alert(user_id=user_id, type='HR_HIGH', message=f'Heart rate high: {value}', timestamp=timestamp)
+            db.session.add(alert)
 
     db.session.commit()
     return jsonify({'message': 'Heart rate data processed'}), 201
@@ -169,8 +201,11 @@ def receive_imu():
             
         if (timestamp - record_ts).total_seconds() / 60 >= patient.inactivity_limit_minutes:
                 has_movement = False
+                # Hareket eşiği: değişim > 1.0 ise hareket var sayılır
+                # (sensör verisi gürültülü olduğu için düşük değerler filtrelenir)
+                MOTION_THRESHOLD = 1.0
                 for record in recent_records:
-                    if abs(record.x_axis - x) > 0.5 or abs(record.y_axis - y) > 0.5 or abs(record.z_axis - z) > 0.5:
+                    if abs(record.x_axis - x) > MOTION_THRESHOLD or abs(record.y_axis - y) > MOTION_THRESHOLD or abs(record.z_axis - z) > MOTION_THRESHOLD:
                         has_movement = True
                         break
                 
@@ -209,6 +244,53 @@ def receive_button():
         db.session.commit()
 
     return jsonify({'message': 'Button status processed'}), 201
+
+
+@api.route('/api/wearable/fall', methods=['POST'])
+@jwt_required()
+def receive_fall():
+    """
+    Receive fall detections from the wearable. Expects:
+    {
+      "probability": float (0-1),
+      "bpm": float (optional),
+      "timestamp": iso string (optional)
+    }
+    """
+    current_user_id = get_jwt_identity()
+    user_id = int(current_user_id)
+
+    data = request.get_json()
+    probability = data.get('probability')
+    bpm = data.get('bpm')
+    timestamp_str = data.get('timestamp')
+
+    if probability is None:
+        return jsonify({'message': 'Probability required'}), 400
+
+    timestamp = datetime.now(timezone.utc)
+    if timestamp_str:
+        try:
+            timestamp = datetime.fromisoformat(timestamp_str)
+        except ValueError:
+            pass
+
+    if should_create_alert(user_id, 'FALL', timestamp):
+        message = f'Fall detected (p={probability:.2f}'
+        if bpm is not None:
+            message += f', bpm={bpm}'
+        message += ')'
+        alert = Alert(
+            user_id=user_id,
+            type='FALL',
+            message=message,
+            timestamp=timestamp
+        )
+        db.session.add(alert)
+        db.session.commit()
+        return jsonify({'message': 'Fall alert created'}), 201
+
+    return jsonify({'message': 'Fall already reported recently'}), 200
 
 # --- Caregiver/Patient Endpoints ---
 
