@@ -41,3 +41,9 @@ final buttonStreamProvider = StreamProvider<ButtonData>((ref) {
   final bleService = ref.watch(bleServiceProvider);
   return bleService.buttonStream;
 });
+
+/// Inactivity Stream Provider
+final inactivityStreamProvider = StreamProvider<InactivityData>((ref) {
+  final bleService = ref.watch(bleServiceProvider);
+  return bleService.inactivityStream;
+});

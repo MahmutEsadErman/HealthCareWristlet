@@ -63,3 +63,14 @@ class ButtonData {
       _$ButtonDataFromJson(json);
   Map<String, dynamic> toJson() => _$ButtonDataToJson(this);
 }
+
+/// Hareketsizlik durumu verisi
+class InactivityData {
+  final bool isInactive;
+  final String? timestamp;
+
+  InactivityData({
+    required this.isInactive,
+    this.timestamp,
+  });
+}

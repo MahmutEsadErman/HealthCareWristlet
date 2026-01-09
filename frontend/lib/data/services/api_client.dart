@@ -248,4 +248,15 @@ class ApiClient {
       },
     );
   }
+
+  /// Send inactivity alert to server
+  Future<Response> sendInactivityAlert(String timestamp) async {
+    return await post(
+      ApiConstants.wearableInactivity,
+      data: {
+        'inactivity_detected': true,
+        'timestamp': timestamp,
+      },
+    );
+  }
 }

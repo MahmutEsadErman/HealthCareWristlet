@@ -17,7 +17,7 @@ class PatientDashboardScreen extends ConsumerWidget {
     final sensorState = ref.watch(sensorProvider);
     final connectionState = ref.watch(bleConnectionStateProvider);
     final heartRateData = ref.watch(heartRateStreamProvider);
-    final imuData = ref.watch(imuStreamProvider);
+    final inactivityData = ref.watch(inactivityStreamProvider);
     final buttonData = ref.watch(buttonStreamProvider);
 
     // Sensor state değişikliklerini dinle (başarı/hata mesajları için)
@@ -275,69 +275,133 @@ class PatientDashboardScreen extends ConsumerWidget {
               ),
               const SizedBox(height: 16),
 
-              // IMU Data Card
-              imuData.when(
+              // Inactivity Alert Card (Hareketsizlik Uyarısı)
+              inactivityData.when(
                 data: (data) => Card(
-                  color: theme.colorScheme.primaryContainer.withOpacity(0.3),
+                  color: data.isInactive
+                      ? Colors.orange.shade50
+                      : Colors.green.shade50,
                   child: Padding(
                     padding: const EdgeInsets.all(20),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                    child: Row(
                       children: [
-                        Row(
-                          children: [
-                            Icon(
-                              Icons.sensors,
-                              color: Colors.blue.shade700,
-                              size: 28,
-                            ),
-                            const SizedBox(width: 12),
-                            Text(
-                              'Hareket Sensörü (IMU)',
-                              style: theme.textTheme.titleLarge?.copyWith(
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 16),
-                        _buildIMURow('X Ekseni', data.xAxis, 'm/s²'),
-                        const SizedBox(height: 8),
-                        _buildIMURow('Y Ekseni', data.yAxis, 'm/s²'),
-                        const SizedBox(height: 8),
-                        _buildIMURow('Z Ekseni', data.zAxis, 'm/s²'),
-                        if (data.timestamp != null)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 12),
-                            child: Text(
-                              'Son güncelleme: ${_formatTime(data.timestamp!)}',
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                color: Colors.grey.shade600,
-                              ),
-                            ),
+                        Container(
+                          width: 64,
+                          height: 64,
+                          decoration: BoxDecoration(
+                            color: data.isInactive
+                                ? Colors.orange.shade100
+                                : Colors.green.shade100,
+                            borderRadius: BorderRadius.circular(16),
                           ),
+                          child: Icon(
+                            data.isInactive
+                                ? Icons.accessibility_new_rounded
+                                : Icons.directions_walk_rounded,
+                            color: data.isInactive
+                                ? Colors.orange.shade700
+                                : Colors.green.shade700,
+                            size: 36,
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Hareketsizlik Uyarısı',
+                                style: theme.textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 6,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: data.isInactive
+                                      ? Colors.orange.shade200
+                                      : Colors.green.shade200,
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                child: Text(
+                                  data.isInactive
+                                      ? '⚠️ HAREKETSİZLİK TESPİT EDİLDİ'
+                                      : '✓ Normal Aktivite',
+                                  style: theme.textTheme.bodyMedium?.copyWith(
+                                    color: data.isInactive
+                                        ? Colors.orange.shade900
+                                        : Colors.green.shade900,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                              if (data.isInactive)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 8),
+                                  child: Text(
+                                    'Bakıcınız bilgilendirildi',
+                                    style: theme.textTheme.bodySmall?.copyWith(
+                                      color: Colors.orange.shade700,
+                                    ),
+                                  ),
+                                ),
+                              if (data.timestamp != null)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 4),
+                                  child: Text(
+                                    'Güncelleme: ${_formatTime(data.timestamp!)}',
+                                    style: theme.textTheme.bodySmall?.copyWith(
+                                      color: Colors.grey.shade600,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
                       ],
                     ),
                   ),
                 ),
                 loading: () => Card(
+                  color: Colors.grey.shade50,
                   child: Padding(
                     padding: const EdgeInsets.all(20),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                    child: Row(
                       children: [
-                        Row(
+                        Container(
+                          width: 64,
+                          height: 64,
+                          decoration: BoxDecoration(
+                            color: Colors.grey.shade200,
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: Icon(
+                            Icons.accessibility_new_rounded,
+                            color: Colors.grey.shade400,
+                            size: 36,
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Icon(Icons.sensors, color: Colors.grey.shade400),
-                            const SizedBox(width: 12),
                             Text(
-                              'Hareket Sensörü (IMU)',
-                              style: theme.textTheme.titleLarge,
+                              'Hareketsizlik Uyarısı',
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Durum bekleniyor...',
+                              style: TextStyle(color: Colors.grey.shade600),
                             ),
                           ],
                         ),
-                        const SizedBox(height: 16),
-                        const Text('Veri bekleniyor...'),
                       ],
                     ),
                   ),
@@ -531,25 +595,7 @@ class PatientDashboardScreen extends ConsumerWidget {
     );
   }
 
-  // Helper method to build IMU data rows
-  Widget _buildIMURow(String label, double value, String unit) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text(
-          label,
-          style: const TextStyle(fontSize: 16),
-        ),
-        Text(
-          '${value.toStringAsFixed(2)} $unit',
-          style: const TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      ],
-    );
-  }
+
 
   // Helper method to format timestamp
   String _formatTime(String timestamp) {

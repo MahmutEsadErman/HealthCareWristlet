@@ -41,7 +41,7 @@ class BleService {
   static String get buttonCharUuid => txCharUuid;
 
   // Device name to search for
-  static String get deviceName => dotenv.get('BLE_DEVICE_NAME', fallback: 'ESP32-DUAL');
+  static String get deviceName => dotenv.get('BLE_DEVICE_NAME', fallback: 'HealthCareWristlet');
 
   BluetoothDevice? _connectedDevice;
   BluetoothCharacteristic? _txChar; // ESP32 -> Phone (NOTIFY)
@@ -56,12 +56,14 @@ class BleService {
   final _heartRateController = StreamController<HeartRateData>.broadcast();
   final _imuController = StreamController<IMUData>.broadcast();
   final _buttonController = StreamController<ButtonData>.broadcast();
+  final _inactivityController = StreamController<InactivityData>.broadcast();
   final _connectionStateController = StreamController<bool>.broadcast();
 
   // Public streams
   Stream<HeartRateData> get heartRateStream => _heartRateController.stream;
   Stream<IMUData> get imuStream => _imuController.stream;
   Stream<ButtonData> get buttonStream => _buttonController.stream;
+  Stream<InactivityData> get inactivityStream => _inactivityController.stream;
   Stream<bool> get connectionStateStream => _connectionStateController.stream;
 
   bool get isConnected => _connectedDevice != null;
@@ -70,9 +72,7 @@ class BleService {
   Future<bool> requestPermissions() async {
     try {
       _logger.i("Requesting Bluetooth permissions...");
-      developer.log('requestPermissions() called', name: 'BLE');
-      // ignore: avoid_print
-      print('🔍 BLE: requestPermissions() called');
+
       
       // Android 12+ permissions
       final bluetoothScan = await Permission.bluetoothScan.request();
@@ -85,22 +85,13 @@ class BleService {
       // Even on Android 12+, many devices still require location for BLE scanning
       final bool granted = bluetoothScan.isGranted && bluetoothConnect.isGranted && location.isGranted;
 
-      developer.log(
-        'Permissions: scan=$bluetoothScan connect=$bluetoothConnect location=$location',
-        name: 'BLE',
-      );
-      // ignore: avoid_print
-      print('🔍 BLE: perms scan=$bluetoothScan connect=$bluetoothConnect location=$location');
+
       
       if (!granted) {
         _logger.w("Required permissions not granted");
-        // ignore: avoid_print
-        print('❌ BLE: Permissions not granted! scan=$bluetoothScan connect=$bluetoothConnect location=$location');
         
         if (!location.isGranted) {
-          _logger.e("⚠️ LOCATION permission is REQUIRED for BLE scanning!");
-          // ignore: avoid_print
-          print('❌ BLE: Location izni gerekli! Lütfen Ayarlar > Uygulamalar > healthcare_wristlet > İzinler > Konum izni verin');
+          _logger.e("LOCATION permission is REQUIRED for BLE scanning!");
         }
         
         if (bluetoothScan.isPermanentlyDenied || 
@@ -121,12 +112,8 @@ class BleService {
 
   /// Start scanning for the wristlet device
   Future<void> startScanning() async {
-    print('🔍 BLE: startScanning() called');
     try {
-      developer.log('startScanning() called', name: 'BLE');
       _logger.i("Starting BLE scan for $deviceName...");
-      print('🔍 BLE: Device name = $deviceName');
-      developer.log('Device name = $deviceName serviceUuid=$serviceUuid', name: 'BLE');
 
       // Check if Bluetooth is available
       if (await FlutterBluePlus.isSupported == false) {
@@ -161,7 +148,6 @@ class BleService {
       // NOT: withServices filtresi bazı Android cihazlarda çalışmıyor
       // Bu yüzden tüm cihazları tarayıp manuel filtreleme yapıyoruz
       _logger.i("Starting scan with 20 second timeout...");
-      developer.log('FlutterBluePlus.startScan() begin (20s, no filter)', name: 'BLE');
       await FlutterBluePlus.startScan(
         timeout: const Duration(seconds: 20),
         androidUsesFineLocation: true, // Bazı cihazlarda gerekli
@@ -170,8 +156,6 @@ class BleService {
       // Listen to scan results
       _scanResultsSub = FlutterBluePlus.scanResults.listen((results) {
         _logger.i("Found ${results.length} devices");
-        // ignore: avoid_print
-        print('🔍 BLE: scanResults count=${results.length}');
         
         for (ScanResult result in results) {
           String deviceNameStr = result.device.platformName;
@@ -182,12 +166,7 @@ class BleService {
               .map((e) => e.toString().toLowerCase())
               .toList();
 
-          // Her cihazı logla (debug için)
-          // ignore: avoid_print
-          print('🔍 BLE Device: name="$deviceNameStr" advName="$advName" localName="$localName" id=$deviceId services=$advServiceUuids');
-          _logger.i(
-            "Device: platformName='$deviceNameStr' advName='$advName' localName='$localName' (ID: $deviceId) services=$advServiceUuids",
-          );
+
           
           // İsim eşleşmesi - daha esnek kontrol (ESP32-DUAL veya HealthWristlet)
           final nameMatch = deviceNameStr.toLowerCase().contains(deviceName.toLowerCase()) ||
@@ -202,11 +181,7 @@ class BleService {
 
           // İsim veya service UUID eşleşirse bağlan
           if (serviceMatch || nameMatch) {
-            // ignore: avoid_print
-            print('✅ BLE MATCH FOUND! serviceMatch=$serviceMatch nameMatch=$nameMatch -> Connecting to $deviceNameStr');
-            _logger.i(
-              "✅ MATCH FOUND! serviceMatch=$serviceMatch nameMatch=$nameMatch -> Connecting to ID=$deviceId",
-            );
+            _logger.i("MATCH FOUND! Connecting to $deviceNameStr");
             stopScanning();
             connectToDevice(result.device);
             break;
@@ -280,7 +255,7 @@ class BleService {
               _logger.i("Setting up TX characteristic for sensor data");
               await _setupCharacteristicNotification(
                 characteristic,
-                _onEsp32Data, // Yeni CSV veri işleyici
+                _onEsp32Data,
               );
             }
             // RX Characteristic (Phone -> ESP32) - WRITE
@@ -304,8 +279,6 @@ class BleService {
   void _onEsp32Data(List<int> data) async {
     try {
       String rawString = utf8.decode(data);
-      // ignore: avoid_print
-      print('📡 BLE Data: $rawString');
       _logger.i("Received: $rawString");
 
       // Fall event from ESP32 AI
@@ -353,9 +326,7 @@ class BleService {
       
       // Emergency event kontrolü
       if (rawString.startsWith("EVT,EMERGENCY")) {
-        _logger.w("🚨 EMERGENCY BUTTON PRESSED!");
-        // ignore: avoid_print
-        print('🚨🚨🚨 EMERGENCY BUTTON PRESSED! 🚨🚨🚨');
+        _logger.w("EMERGENCY BUTTON PRESSED!");
         
         ButtonData button = ButtonData(
           panicButtonStatus: true,
@@ -369,45 +340,48 @@ class BleService {
         // Sunucuya gönder - bakıcı bu alert'i görecek
         try {
           await _apiClient.sendPanicButton(button.timestamp);
-          _logger.i("Emergency alert sent to server - caregiver will be notified");
-          // ignore: avoid_print
-          print('✅ Emergency alert sunucuya gönderildi - bakıcı bilgilendirilecek');
+          _logger.i("Emergency alert sent to server");
         } catch (e) {
           _logger.w("Failed to send panic button to server: $e");
-          // ignore: avoid_print
-          print('❌ Emergency alert sunucuya gönderilemedi: $e');
         }
         return;
       }
       
-      // CSV sensor verisi: ax,ay,az,gx,gy,gz,rawIR,filteredSignal,threshold,bpm,finger
+      // Inactivity event kontrolü
+      if (rawString.startsWith("EVT,INACTIVITY")) {
+        _logger.w("INACTIVITY DETECTED!");
+        
+        InactivityData inactivity = InactivityData(
+          isInactive: true,
+          timestamp: DateTime.now().toIso8601String(),
+        );
+        _inactivityController.add(inactivity);
+        
+        // Sunucuya hareketsizlik alerti gönder
+        try {
+          await _apiClient.sendInactivityAlert(inactivity.timestamp!);
+          _logger.i("Inactivity alert sent to server");
+        } catch (e) {
+          _logger.w("Failed to send inactivity alert to server: $e");
+        }
+        return;
+      }
+      
+      // Yeni CSV sensor verisi formatı: bpm,finger,inactivity
       List<String> parts = rawString.split(',');
-      if (parts.length >= 11) {
-        double ax = double.tryParse(parts[0]) ?? 0;
-        double ay = double.tryParse(parts[1]) ?? 0;
-        double az = double.tryParse(parts[2]) ?? 0;
-        double gx = double.tryParse(parts[3]) ?? 0;
-        double gy = double.tryParse(parts[4]) ?? 0;
-        double gz = double.tryParse(parts[5]) ?? 0;
-        // int rawIR = int.tryParse(parts[6]) ?? 0;
-        // double filteredSignal = double.tryParse(parts[7]) ?? 0;
-        // double threshold = double.tryParse(parts[8]) ?? 0;
-        double bpm = double.tryParse(parts[9]) ?? 0;
-        int finger = int.tryParse(parts[10]) ?? 0;
+      if (parts.length >= 3) {
+        double bpm = double.tryParse(parts[0]) ?? 0;
+        int finger = int.tryParse(parts[1]) ?? 0;
+        int inactivity = int.tryParse(parts[2]) ?? 0;
         
         String timestamp = DateTime.now().toIso8601String();
         
-        // IMU verisi
-        IMUData imu = IMUData(
-          xAxis: ax,
-          yAxis: ay,
-          zAxis: az,
-          gx: gx,
-          gy: gy,
-          gz: gz,
+        // Hareketsizlik durumunu güncelle
+        InactivityData inactivityData = InactivityData(
+          isInactive: inactivity == 1,
           timestamp: timestamp,
         );
-        _imuController.add(imu);
+        _inactivityController.add(inactivityData);
         
         // Heart rate verisi (sadece parmak varsa)
         if (finger == 1 && bpm > 0) {
@@ -430,17 +404,8 @@ class BleService {
           }
         }
         
-        // IMU verisini sunucuya gönder
-        try {
-          await _apiClient.sendIMU(ax, ay, az, gx, gy, gz, timestamp);
-        } catch (e) {
-          final now = DateTime.now();
-          final last = _lastImuSendErrorLogAt;
-          if (last == null || now.difference(last) >= _sendErrorLogInterval) {
-            _lastImuSendErrorLogAt = now;
-            _logger.w("Failed to send IMU to server: $e");
-          }
-        }
+        // NOT: Artık IMU verisi sürekli gönderilmiyor
+        // Sadece hareketsizlik algılandığında EVT,INACTIVITY olarak geliyor
       }
     } catch (e) {
       _logger.e("Error parsing ESP32 data: $e");
@@ -469,15 +434,29 @@ class BleService {
     Function(List<int>) onData,
   ) async {
     try {
+      _logger.i("Setting up notifications for ${characteristic.uuid}...");
+      
       await characteristic.setNotifyValue(true);
-      characteristic.lastValueStream.listen((value) {
-        if (value.isNotEmpty) {
-          onData(value);
-        }
-      });
+      _logger.i("setNotifyValue(true) completed for ${characteristic.uuid}");
+      
+      characteristic.lastValueStream.listen(
+        (value) {
+          _logger.i("Received ${value.length} bytes from ${characteristic.uuid}");
+          if (value.isNotEmpty) {
+            onData(value);
+          }
+        },
+        onError: (error) {
+          _logger.e("Stream error for ${characteristic.uuid}: $error");
+        },
+        onDone: () {
+          _logger.w("Stream closed for ${characteristic.uuid}");
+        },
+        cancelOnError: false,
+      );
       _logger.i("Notifications enabled for ${characteristic.uuid}");
-    } catch (e) {
-      _logger.e("Error setting up notifications: $e");
+    } catch (e, stackTrace) {
+      _logger.e("Error setting up notifications: $e\n$stackTrace");
     }
   }
 
@@ -586,6 +565,7 @@ class BleService {
     _heartRateController.close();
     _imuController.close();
     _buttonController.close();
+    _inactivityController.close();
     _connectionStateController.close();
     disconnect();
   }

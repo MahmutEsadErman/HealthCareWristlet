@@ -1,17 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../domain/providers/ble_provider.dart';
-import 'dart:math' as math;
 
 /// Sensor Data Display Screen
-/// Shows real-time heart rate, IMU, and button data from ESP32
+/// Shows real-time heart rate, inactivity status, and panic button data from ESP32
 class SensorDataScreen extends ConsumerWidget {
   const SensorDataScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final heartRateData = ref.watch(heartRateStreamProvider);
-    final imuData = ref.watch(imuStreamProvider);
+    final inactivityData = ref.watch(inactivityStreamProvider);
     final buttonData = ref.watch(buttonStreamProvider);
     final connectionState = ref.watch(bleConnectionStateProvider);
 
@@ -64,8 +63,8 @@ class SensorDataScreen extends ConsumerWidget {
                 _buildHeartRateCard(heartRateData),
                 const SizedBox(height: 16),
 
-                // IMU Data Card
-                _buildIMUCard(imuData),
+                // Inactivity Status Card (replaces IMU Card)
+                _buildInactivityCard(inactivityData),
                 const SizedBox(height: 16),
 
                 // Panic Button Card
@@ -130,7 +129,7 @@ class SensorDataScreen extends ConsumerWidget {
     );
   }
 
-  Widget _buildIMUCard(AsyncValue imuData) {
+  Widget _buildInactivityCard(AsyncValue inactivityData) {
     return Card(
       elevation: 4,
       child: Padding(
@@ -140,28 +139,64 @@ class SensorDataScreen extends ConsumerWidget {
           children: [
             Row(
               children: [
-                Icon(Icons.sensors, color: Colors.blue[700]),
+                Icon(Icons.accessibility_new, color: Colors.blue[700]),
                 const SizedBox(width: 8),
                 const Text(
-                  'IMU Data',
+                  'Activity Status',
                   style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                 ),
               ],
             ),
             const SizedBox(height: 16),
-            imuData.when(
+            inactivityData.when(
               data: (data) => Column(
                 children: [
-                  _buildIMURow('Accelerometer X', data.xAxis, 'm/s²'),
-                  _buildIMURow('Accelerometer Y', data.yAxis, 'm/s²'),
-                  _buildIMURow('Accelerometer Z', data.zAxis, 'm/s²'),
-                  const Divider(height: 24),
-                  if (data.gx != null)
-                    _buildIMURow('Gyroscope X', data.gx!, 'rad/s'),
-                  if (data.gy != null)
-                    _buildIMURow('Gyroscope Y', data.gy!, 'rad/s'),
-                  if (data.gz != null)
-                    _buildIMURow('Gyroscope Z', data.gz!, 'rad/s'),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(24),
+                    decoration: BoxDecoration(
+                      color: data.isInactive
+                          ? Colors.orange[100]
+                          : Colors.green[100],
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Column(
+                      children: [
+                        Icon(
+                          data.isInactive
+                              ? Icons.warning_amber_rounded
+                              : Icons.directions_walk,
+                          size: 48,
+                          color: data.isInactive
+                              ? Colors.orange[700]
+                              : Colors.green[700],
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          data.isInactive ? 'INACTIVITY DETECTED' : 'Active',
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                            color: data.isInactive
+                                ? Colors.orange[700]
+                                : Colors.green[700],
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          data.isInactive
+                              ? 'No movement detected for 1 minute'
+                              : 'Normal activity detected',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: data.isInactive
+                                ? Colors.orange[600]
+                                : Colors.green[600],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                   if (data.timestamp != null)
                     Padding(
                       padding: const EdgeInsets.only(top: 8.0),
@@ -172,32 +207,44 @@ class SensorDataScreen extends ConsumerWidget {
                     ),
                 ],
               ),
-              loading: () => const Center(
-                child: Text('Waiting for data...'),
+              loading: () => Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  color: Colors.grey[100],
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Column(
+                  children: [
+                    Icon(
+                      Icons.hourglass_empty,
+                      size: 48,
+                      color: Colors.grey[400],
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Monitoring...',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.grey[600],
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Analyzing movement patterns (1 min window)',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.grey[500],
+                      ),
+                    ),
+                  ],
+                ),
               ),
               error: (_, __) => const Text('No data'),
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildIMURow(String label, double value, String unit) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4.0),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(label, style: const TextStyle(fontSize: 14)),
-          Text(
-            '${value.toStringAsFixed(3)} $unit',
-            style: const TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        ],
       ),
     );
   }

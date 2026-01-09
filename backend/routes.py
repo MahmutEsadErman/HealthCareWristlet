@@ -246,6 +246,47 @@ def receive_button():
     return jsonify({'message': 'Button status processed'}), 201
 
 
+@api.route('/api/wearable/inactivity', methods=['POST'])
+@jwt_required()
+def receive_inactivity():
+    """
+    Receive inactivity alerts from ESP32 wristlet.
+    Creates an INACTIVITY alert that caregivers can see.
+    """
+    current_user_id = get_jwt_identity()
+    user_id = int(current_user_id)
+
+    data = request.get_json()
+    inactivity_detected = data.get('inactivity_detected')
+    timestamp_str = data.get('timestamp')
+
+    if not inactivity_detected:
+        return jsonify({'message': 'No inactivity detected'}), 200
+
+    timestamp = datetime.now(timezone.utc)
+    if timestamp_str:
+        try:
+            timestamp = datetime.fromisoformat(timestamp_str)
+        except ValueError:
+            pass
+
+    # Check if we should create the alert (avoid spam)
+    if should_create_alert(user_id, 'INACTIVITY', timestamp):
+        alert = Alert(
+            user_id=user_id, 
+            type='INACTIVITY', 
+            message='Patient inactivity detected by wristlet', 
+            timestamp=timestamp
+        )
+        db.session.add(alert)
+        db.session.commit()
+        print(f"[INACTIVITY] Alert created for user {user_id}")
+        return jsonify({'message': 'Inactivity alert created'}), 201
+    else:
+        print(f"[INACTIVITY] Alert skipped (cooldown) for user {user_id}")
+        return jsonify({'message': 'Inactivity already reported recently'}), 200
+
+
 @api.route('/api/wearable/fall', methods=['POST'])
 @jwt_required()
 def receive_fall():

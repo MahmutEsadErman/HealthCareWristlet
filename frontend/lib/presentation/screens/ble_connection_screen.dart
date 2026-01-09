@@ -53,7 +53,7 @@ class BleConnectionScreen extends ConsumerWidget {
               Text(
                 connectionState.when(
                   data: (isConnected) => isConnected
-                      ? 'Connected to ESP32-DUAL'
+                      ? 'Connected to HealthCareWristlet'
                       : 'Not Connected',
                   loading: () => 'Connecting...',
                   error: (_, __) => 'Connection Error',
@@ -124,7 +124,7 @@ class BleConnectionScreen extends ConsumerWidget {
 
               // Info Text
               Text(
-                'Make sure ESP32-DUAL is powered on\nand in Bluetooth range',
+                'Make sure HealthCareWristlet is powered on\nand in Bluetooth range',
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                       color: Colors.grey,
                     ),

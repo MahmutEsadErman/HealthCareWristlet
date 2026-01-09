@@ -46,8 +46,6 @@ app.*.map.json
 
 .claude/
 
-.env
-
 *.md
 
 *.apk

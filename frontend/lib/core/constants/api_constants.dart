@@ -15,6 +15,7 @@ class ApiConstants {
   static const String wearableImu = '/api/wearable/imu';
   static const String wearableButton = '/api/wearable/button';
   static const String wearableFall = '/api/wearable/fall';
+  static const String wearableInactivity = '/api/wearable/inactivity';
 
   // Patient & Alert Endpoints
   static const String alerts = '/api/alerts';
